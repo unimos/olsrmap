@@ -1,7 +1,7 @@
 
 
 <?php
-  //The OLSR daemon must output the latlon file to this location
+  //The location where the OLSR daemon dumps the latlon file
   $latlonfile="/var/run/latlon.js";
 ?>
 
@@ -12,6 +12,7 @@
     <style type="text/css">
       html, body, #map {
         height: 100%;
+        width: 100%;
         margin: 0;
         padding: 0;
       }
@@ -20,15 +21,11 @@
     </script>
     <script type="text/javascript">
       var map;
-      var bounds;
-      var alias = new Array;
-      var mainipaliases = new Array;
-      var mainiplinks = new Array;
-      var mainipnames = new Array;
-      var mainiplines = new Array;
-      var points = new Array;
-      var unkpos = new Array;
-      var lineid = 0;
+      var bounds; //Automagically defines the best bounds for the map
+
+      var point = new Object();//"Associative Array" with all data from all nodes
+      var alias = new Object();//"Associative Array" with the main ip of each alias
+
       var greenpoint = {
           path: google.maps.SymbolPath.CIRCLE,
           fillColor: "#7ac142",
@@ -38,7 +35,7 @@
       };
       var infowindow;
       var animationIntervalID;
-      var animatedlines = new Array;
+      var animatedlines = new Array();
       var animate = true;
 
       var origin = null;
@@ -47,6 +44,7 @@
       var destlisten = null;
       var distline = null;
 
+      //TODO: This is awful. Improve this code!
       function calcDist(event) {
         if (null != distline) {
           distline.setMap(null);
@@ -77,6 +75,7 @@
               infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>Distance:</b><br/><br/>" +
                      Math.round(google.maps.geometry.spherical.computeDistanceBetween(origin.getPosition(), dest.getPosition())*100)/100 + " m</div>"
                      );
+              infowindow.open(map, dest);
             }
           });
         } else {
@@ -110,6 +109,7 @@
             infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>Distance:</b><br/><br/>" +
                      Math.round(google.maps.geometry.spherical.computeDistanceBetween(origin.getPosition(), dest.getPosition())*100)/100 + " m</div>"
                      );
+              infowindow.open(map, dest);
           });
         }
       }
@@ -185,98 +185,152 @@
         });
 
       }
-      
-      
 
-      
-      function Mid (mainip, aliasip) {
-        alias[aliasip] = mainip;
-        if ( null == mainipaliases[mainip]) {
-          mainipaliases[mainip] = new Array;
+
+      /*
+       * The popup that comes up when clicking a node
+       */
+      function getNeighboursTable(ip) {
+        var result = "<table style='border: 0px; padding-left:2em; white-space: nowrap;'>";
+
+        var currlink;
+        for (var i = 0; i < point[ip].links.length; i++) {
+          currlink = point[ip].links[i];
+          result += "<tr>" +
+                      "<td>" + point[currlink.toip].name + ":</td><td> LQ: " + currlink.lq + "</td><td> NLQ: " + currlink.nlq + "</td><td> ETX: " + currlink.etx + "</td>" +
+                    "</tr>";
         }
-        mainipaliases[mainip].push(aliasip);
+        result += "</table>"
+        return result;
       }
-     
-     
-      var offset = 0;
-      function animateFun() {
-        if (animate) {
-          offset = offset + 5;
-          for (var i = 0; i < animatedlines.length; i++) {
-            var icons = animatedlines[i].get('icons');
-            icons[0].offset = offset + "px";
-            animatedlines[i].set("icons", icons);
-          }
+
+      function showNodeDetailWindow (ip) {
+        if (null != infowindow) {
+          infowindow.close();
+          infowindow = null;
         }
+
+        infowindow = new google.maps.InfoWindow({
+          content: "<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>" + point[ip].name + "</b><br/><br/>" +
+                   "<b>Node IPs:</b> "+ ip +
+                     (null == point[ip].aliases.length > 0? "" : ", " + point[ip].aliases) + "<br/>" +
+                     (null == point[ip].links.length   > 0? "" : "<b>Neighbours:</b><br/>" + getNeighboursTable(ip)) +
+                   "</div>"
+        });
+
+        infowindow.open(map, point[ip].marker);
       }
-     
-      
-      function Node (mainip, lat, lon, ishna, hnaip, name) {
-        points[mainip] = new google.maps.Marker({
-          position: new google.maps.LatLng(lat, lon),
-          icon: greenpoint,
-          title: name,
-          map: map
-        });
-        mainipnames[mainip] = name;
-     
-     
-        google.maps.event.addListener(points[mainip], "click", function() {
-          if (null != infowindow) {
-            infowindow.close();
-            infowindow = null;
+
+
+      /*
+       * The animated lines that show up when hovering a node
+       */
+      function animateNodeLines (ip) {
+        for (var i = 0; i < point[ip].lines.length ; i++) {
+          animatedlines.push(new google.maps.Polyline({
+            path: point[ip].lines[i].getPath(),
+            strokeOpacity: 0,
+            icons: [{
+              icon: { path: 'M 0, -1 0, 2', strokeOpacity: 1, strokeColor: "#00FF00", scale: 3 },
+              offset: '0',
+              repeat: '20px'
+            }],
+            zIndex: 10,
+            map: map
+          }));
+
+        }
+
+        var offset = 0;
+        animationIntervalID = window.setInterval(
+          function animateFun() {
+            if (animate) {
+              offset = offset + 2;
+              for (var i = 0; i < animatedlines.length; i++) {
+                var icons = animatedlines[i].get('icons');
+                icons[0].offset = offset + "px";
+                animatedlines[i].set("icons", icons);
+              }
+            }
           }
+          , 500);
+      }
 
-          infowindow = new google.maps.InfoWindow({
-            content: "<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>" + name + "</b><br/><br/>" +
-                     "<b>Node IPs:</b> "+ mainip + 
-                       (null == mainipaliases[mainip]?"":", " + mainipaliases[mainip]) + "<br/>" +
-                       (null == mainiplinks[mainip]?"" :
-                         "<b>Neighbours:</b><br/>" +
-                         "<table style='border: 0px; padding-left:2em; white-space: nowrap;'><tr>" + mainiplinks[mainip].join("</tr><tr>") + "</tr></table>"
-                       ) +
-                     "</div>"
-          });
-
-          infowindow.open(map, points[mainip]);
-        });
-
-        google.maps.event.addListener(points[mainip], "mouseover", function() {
-          for (var i = 0; i < mainiplines[mainip].length; i++) {
-            animatedlines.push(new google.maps.Polyline({
-              path: mainiplines[mainip][i].getPath(),
-              strokeOpacity: 0,
-              icons: [{
-                icon: { path: 'M 0, -1 0, 2', strokeOpacity: 1, strokeColor: "#00FF00", scale: 3 },
-                offset: '0',
-                repeat: '20px'
-              }],
-              zIndex: 10,
-              map: map
-            }));
-
-          }
-          animationIntervalID = window.setInterval(animateFun, 500);
-        });
-
-        google.maps.event.addListener(points[mainip], "mouseout", function() {
-          for (var i = 0; i < animatedlines.length; i++) {
+      function stopAnimatingNodeLines(ip) {
+        for (var i = 0; i < animatedlines.length; i++) {
             animatedlines[i].setMap(null);
             animatedlines[i] = null;
-          }
-          animatedlines = new Array;
-          window.clearInterval(animationIntervalID);
-        });
-        bounds.extend(points[mainip].getPosition());
+        }
+        animatedlines = new Array();
+        window.clearInterval(animationIntervalID);
       }
-     
-      
+
+
+      /*
+       * All information we gather for each node
+       */
+      function OLSRNode (mainip, lat, lon, name) {
+        this.name  = name;
+        this.ip    = mainip;
+        this.aliases = new Array();
+        this.lat   = lat;
+        this.lon   = lon;
+        this.links = new Array();
+        this.hasCoords = false;
+
+        this.setCoords = function(setLat, setLon) {
+          this.lat = setLat;
+          this.lon = setLon;
+
+          this.marker = new google.maps.Marker({
+              position: new google.maps.LatLng(setLat, setLon),
+              icon: greenpoint,
+              title: this.name,
+              map: map
+          });
+
+          google.maps.event.addListener(this.marker, "click",     function() { showNodeDetailWindow(mainip);   });
+          google.maps.event.addListener(this.marker, "mouseover", function() { animateNodeLines(mainip);       });
+          google.maps.event.addListener(this.marker, "mouseout",  function() { stopAnimatingNodeLines(mainip); });
+
+          bounds.extend(this.marker.getPosition());
+          this.hasCoords = true;
+        };
+        if (lat != null && lon != null) {
+          this.setCoords(lat, lon);
+        }
+        this.lines = new Array();// [google.maps.Polyline]
+
+      }
+
+
+      /*
+       * Node dumping functions
+       */
+      function Mid (mainip, aliasip) {
+        alias[aliasip] = mainip;
+        if ( null == point[mainip]) {
+          point[mainip] = new OLSRNode(mainip, null, null, null);//isn't there a better way?
+        }
+        point[mainip].aliases.push(aliasip);
+      }
+
+
+      function Node (mainip, lat, lon, ishna, hnaip, name) {
+        if (null == point[mainip]) {
+          point[mainip] = new OLSRNode(mainip, lat, lon, name);
+        } else {
+          point[mainip].name = name;
+          point[mainip].setCoords(lat, lon);
+        }
+      }
+
+
       function Self (mainip, lat, lon, ishna, hnaip, name) {
         Node(mainip, lat, lon, ishna, hnaip, name);
       }
-     
-     
-      
+
+
       function Link (fromip, toip, lq, nlq, etx) {
         if (null != alias[toip]) {
           toip = alias[toip];
@@ -284,43 +338,32 @@
         if (null != alias[fromip]) {
           fromip = alias[fromip];
         }
-        if (null != points[fromip] && null != points[toip]) {
+        if (null != point[fromip] && null != point[toip] &&
+            point[fromip].hasCoords && point[toip].hasCoords) {
 
-          if ( null == mainiplinks[fromip] ) {
-            mainiplinks[fromip] = new Array;
-          }
-          mainiplinks[fromip].push("<td>" + mainipnames[toip] + ":</td><td> LQ: " + lq + "</td><td> NLQ: " + nlq + "</td><td> ETX: " + etx + "</td>");
+          point[fromip].links.push({
+            toip: toip,
+            lq: lq,
+            nlq: nlq,
+            etx: etx
+          });
 
           //Add a line between the two points
-          if (null == mainiplines[fromip]) {
-            mainiplines[fromip] = new Array;
-          }
-          mainiplines[fromip].push(new google.maps.Polyline({
+          point[fromip].lines.push(new google.maps.Polyline({
             path: [
-              points[fromip].getPosition(),
-              points[toip].getPosition()
+              point[fromip].marker.getPosition(),
+              point[toip].marker.getPosition()
             ],
             strokeColor: "#FF0000",
             strokeOpacity: 0.5,
             clickable: false,
             zIndex: 5,
             map: map
-          }));
+            })
+          );
         } else {
-          if (null == points[toip]) {
-            unkpos[toip] = mainipnames[toip];
-            if (null == unkpos[toip]) {
-              unkpos[toip] = toip;
-            }
-          }
-          if (null == points[fromip]) {
-            unkpos[fromip] = mainipnames[toip];
-            if (null == unkpos[fromip]) {
-              unkpos[fromip] = fromip;
-            }
-          }
+          //TODO: Add debug code here
         }
-        lineid++;
       }
       
       function PLink (fromip, toip, lq, nlq, etx, lata, lona, ishnaa, latb, lonb, ishnab) {
@@ -328,35 +371,31 @@
       }
       
       function initialize () {
-        var mapOptions = {
-          mapTypeId: google.maps.MapTypeId.ROADMAP,
-        };
 
-        map = new google.maps.Map(document.getElementById("map"), mapOptions);
+        map = new google.maps.Map(document.getElementById("map"), { mapTypeId: google.maps.MapTypeId.ROADMAP });
         bounds = new google.maps.LatLngBounds();
 
-        var controls = document.createElement('div');
+        var controls = document.createElement("div");
         controls.index = -1;
         buildControls(controls);
 
         map.controls[google.maps.ControlPosition.TOP_RIGHT].push(controls);
         
+        //The nodes dump goes here
         var INFINITE = 99.9;
-        /*
-        Let the dump go here
-        */
         <?php
           if(file_exists($latlonfile)) {
             $file = fopen($latlonfile, "r");
-            echo  fread($file,500000);
-	  }
+            echo fread($file,500000);
+          }
         ?>
 
-        if (bounds.isEmpty()) {
+        if ( ! bounds.isEmpty()) {
+          map.fitBounds(bounds);
+        } else {
+          //Center the map between Nazaré and Ourém
           map.setCenter(new google.maps.LatLng(39.6183836, -8.8302612));
           map.setZoom(11);
-        } else {
-          map.fitBounds(bounds);
         }
       }
     </script>
