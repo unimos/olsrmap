@@ -16,10 +16,13 @@ The olsrmap is inspired by both these approaches and tries to modernise them.
 Looking around at the available OLSR maps, none of them seemed to have all features we needed, so I just created a new one.
 
 #### The olsrmap ####
- * Uses Google Maps;
- * Displays all nodes that share their location;
+ * Displays all nodes on an OLSR network that share their location;
  * Displays all current links between these nodes;
- * Features measuring tools for easy distance determination;
+ * Features measuring tools for easy:
+   * distance determination;
+   * coordinate determination;
+   * determination of the magnetic bearing between two points;
+ * Uses Google Maps;
  * Can be installed on a central/Internet-accessible server;
  * Can be used on any OLSR node (e.g.: an OpenWrt wireless router).
 
