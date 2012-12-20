@@ -19,6 +19,8 @@
     </style>
     <script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?sensor=false&libraries=geometry">
     </script>
+    <script type="text/javascript" src="WorldMagneticModel.js">
+    </script>
     <script type="text/javascript">
       var map;
       var bounds; //Automagically defines the best bounds for the map
@@ -26,6 +28,7 @@
       var point = new Object();//"Associative Array" with all data from all nodes
       var alias = new Object();//"Associative Array" with the main ip of each alias
 
+      // Some global vars to hold common Objects used multiple times
       var greenpoint = {
           path: google.maps.SymbolPath.CIRCLE,
           fillColor: "#7ac142",
@@ -34,83 +37,214 @@
           strokeWeight: 0
       };
       var infowindow;
-      var animationIntervalID;
-      var animatedlines = new Array();
+
+      // Link animation related variables
       var animate = true;
+      var animationMovingIcon = { path: 'M 0, -1 0, 2', strokeOpacity: 1, strokeColor: "#E4FF00", scale: 3 };
+      var animationIntervalID = null;
+      var animatedlines = new Array();
 
-      var origin = null;
-      var dest = null;
-      var origlisten = null;
-      var destlisten = null;
-      var distline = null;
+      // Distances and topology metrics
+      var topographer = null;
 
-      //TODO: This is awful. Improve this code!
-      function calcDist(event) {
-        if (null != distline) {
-          distline.setMap(null);
-          distline = null;
-        }
-        if (null != infowindow) {
-          infowindow.close();
-          infowindow = null;
-        }
-        if (null != dest) {
-          dest.setMap(null);
-          dest = null;
-        }
-        if (null != destlisten) {
-          google.maps.event.removeListener(destlisten);
-          destlisten = null;
-        }
-        if (null == origin) {
-          origin = new google.maps.Marker({
-            position: event.latLng,
-            title: "Starting point",
-            draggable: true,
-            map: map
-          });
-          origlisten = google.maps.event.addListener(origin, "dragend", function() {
-            if (null != distline) {
-              distline.setPath([origin.getPosition(), dest.getPosition()]);
-              infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>Distance:</b><br/><br/>" +
-                     Math.round(google.maps.geometry.spherical.computeDistanceBetween(origin.getPosition(), dest.getPosition())*100)/100 + " m</div>"
-                     );
-              infowindow.open(map, dest);
-            }
+      var coordinateMarker = null;
+
+
+
+      /*
+       * Topography analysis tools
+       */
+
+      function updateTopographer(event) {
+        if (null == topographer.origin) {
+          topographer.updateCoords(event.latLng, null);
+
+          topographer.originDragger = google.maps.event.addListener(topographer.origin, "dragend", function() {
+            topographer.updateCoords(topographer.origin.getPosition(), null);
           });
         } else {
-          dest = new google.maps.Marker({
+          topographer.updateCoords(null, event.latLng);
+
+          topographer.destinationDragger = google.maps.event.addListener(topographer.destination, "dragend", function() {
+            topographer.updateCoords(null, topographer.destination.getPosition());
+          });
+        }
+      }
+
+      function Topographer () {
+      /*
+       {
+         google.maps.Marker origin,
+         google.maps.Marker destination,
+         google.maps.event.Listener originDragger,
+         google.maps.event.Listener destinationDragger,
+         google.maps.event.Listener clickListener,
+         google.maps.Polyline line,
+         hasLine(),
+         updateInfoWindow(),
+         updateLine()
+       }
+       */
+        this.clickListener = google.maps.event.addListener(map, "click", updateTopographer);
+        this.line = null;
+        this.hasLine = function () { return this.line != null; };
+
+        this.updateCoords = function(originLatLng, destinationLatLng) {
+          if (null != originLatLng) {
+            if (null == this.origin) {
+              this.origin = new google.maps.Marker({
+                position: originLatLng,
+                title: "Starting point",
+                draggable: true,
+                map: map
+              });
+            } else {
+              this.origin.setPosition(originLatLng);
+            }
+          }
+          if (null != destinationLatLng) {
+            if (null == this.destination) {
+              this.destination = new google.maps.Marker({
+                position: destinationLatLng,
+                title: "Ending point",
+                draggable: true,
+                map: map
+              });
+            } else {
+              this.destination.setPosition(destinationLatLng);
+            }
+
+          }
+
+          if (null == this.origin) { //TODO: get rid of this
+            alert("Congratulations! You found a bug on the map! :-)\nPlease go to http://github.com/Pitxyoki/olsrmap/issues and say that you saw this message.");
+            return;
+          }
+
+          if (null != this.origin && null != this.destination) {
+            if (null == this.line) {
+              this.line = new google.maps.Polyline({
+                path: [
+                        this.origin.getPosition(),
+                        this.destination.getPosition()
+                      ],
+                strokeColor: "#FF0000",
+                strokeOpacity: 1,
+                clickable: false,
+                zIndex: 5,
+                map: map
+              });
+            } else { //line != null
+              this.line.setPath([this.origin.getPosition(), this.destination.getPosition()]);
+            }
+            this.updateInfoWindow();
+          }
+        };
+
+        this.updateInfoWindow = function () {
+          if (!this.hasLine()) {
+            infowindow.close();
+            infowindow = null;
+          } else {
+            if (null == infowindow) {
+              infowindow = new google.maps.InfoWindow();
+            }
+            var distanceMeters = Math.round(google.maps.geometry.spherical.computeDistanceBetween(this.origin.getPosition(), this.destination.getPosition())*100)/100;
+            var trueNorthHeading = google.maps.geometry.spherical.computeHeading(this.origin.getPosition(), this.destination.getPosition());
+
+            //This is the heading relative to True North, from one point to the other, given by Google
+            //var headingTrueNorthCompass = Math.round(((headingTrueNorth + 2.8 + 360)%360) * 100)/100;
+
+            //But when we're in the field, we use magnetic compasses
+            var now = new Date();
+            var yearStart    = new Date(now.getFullYear(), 0, 1);
+            var yearLength   = new Date(now.getFullYear()+1, 0, 1) - yearStart;
+            var nowYearFloat = now.getFullYear() + Math.round(((now - yearStart) / yearLength) * 100) / 100;
+
+
+            var magneticDeclination = (new WorldMagneticModel()).declination(0.0, this.origin.getPosition().lat(), this.origin.getPosition().lng(), nowYearFloat);
+            var headingMagneticCompass = Math.round(((trueNorthHeading - magneticDeclination + 360)%360) * 100) / 100;
+
+            infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\">" +
+                                    "<b>Distance:</b> " + distanceMeters + " m<br/>" +
+                                    "<b>Magnetic heading at start:</b> " + headingMagneticCompass + "&deg; (approx.)" +
+                                  "</div>");
+                                 //The heading measurement is adjusted to the magnetic north deviation in Portugal for 2013-2014 (approx. 2.8).
+                                 //Source: http://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination
+            infowindow.open(map, this.destination);
+          }
+        };
+
+        this.kill = function () {
+          if (null != this.origin)             this.origin.setMap(null);
+          if (null != this.destination)        this.destination.setMap(null);
+          if (null != this.originDragger)      google.maps.event.removeListener(this.originDragger);
+          if (null != this.destinationDragger) google.maps.event.removeListener(this.destinationDragger);
+          if (null != this.line)               this.line.setMap(null);
+          google.maps.event.removeListener(this.clickListener);
+          //infowindow.close(); //NO, because the user might have opened it on a node
+
+
+          this.origin = null;
+          this.destination = null;
+          this.originDragger = null;
+          this.destinationDragger = null;
+          this.line = null;
+          this.clickListener = null;
+          //infowindow = null; //NO, see above
+        };
+
+      }
+
+      /*
+       * Coordinate determination tool
+       */
+      function updateCoordinateMarker(event) {
+        if (null == coordinateMarker.marker) {
+          coordinateMarker.marker = new google.maps.Marker({
             position: event.latLng,
-            title: "Ending point",
+            title: "Place coordinates",
             draggable: true,
             map: map
           });
-          distline = new google.maps.Polyline({
-            path: [
-              origin.getPosition(),
-              dest.getPosition()
-            ],
-            strokeColor: "#FF0000",
-            strokeOpacity: 1,
-            clickable: false,
-            zIndex: 5,
-            map: map
-          });
 
-          infowindow = new google.maps.InfoWindow({
-            content: "<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>Distance:</b><br/><br/>" +
-                     Math.round(google.maps.geometry.spherical.computeDistanceBetween(origin.getPosition(), dest.getPosition())*100)/100 + " m</div>"
-          });
+          coordinateMarker.markerDragger = google.maps.event.addListener(coordinateMarker.marker, "dragend", function () {
+            coordinateMarker.updateCoords();
+            });
+        } else {
+          coordinateMarker.marker.setPosition(event.latLng);
+        }
+        coordinateMarker.updateCoords();
+      }
 
-          infowindow.open(map, dest);
+      function CoordinateMarker() {
+        //google.maps.Marker this.marker
+        //google.maps.event.Listener clickListener
+        //google.maps.event.Listener markerDragger
+        //updateCoords()
 
-          destlisten = google.maps.event.addListener(dest, "dragend", function() {
-            distline.setPath([origin.getPosition(), dest.getPosition()]);
-            infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>Distance:</b><br/><br/>" +
-                     Math.round(google.maps.geometry.spherical.computeDistanceBetween(origin.getPosition(), dest.getPosition())*100)/100 + " m</div>"
-                     );
-              infowindow.open(map, dest);
-          });
+        this.clickListener = google.maps.event.addListener(map, "click", updateCoordinateMarker);
+
+        this.updateCoords = function () {
+          if (null == infowindow) {
+            infowindow = new google.maps.InfoWindow();
+          }
+          infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\">" +
+                                    "<b>Coordinates:</b> " + Math.round(this.marker.getPosition().lat()*100000)/100000 +
+                                                             ", " +
+                                                             Math.round(this.marker.getPosition().lng()*100000)/100000 +
+                                " </div>");
+          infowindow.open(map, this.marker);
+        }
+
+        this.kill = function() {
+          if (null != this.marker) this.marker.setMap(null);
+          if (null != this.markerDragger) google.maps.event.removeListener(this.markerDragger);
+          google.maps.event.removeListener(this.clickListener);
+
+          this.marker = null;
+          this.markerDragger = null;
+          this.clickListener = null;
         }
       }
 
@@ -126,8 +260,7 @@
         rulerUI.style.minWidth = '34px';
         rulerUI.style.cursor = 'pointer';
         rulerUI.style.textAlign = 'center';
-        rulerUI.title = 'Click to measure distances';
-        controlsDiv.appendChild(rulerUI);
+        rulerUI.title = 'Measure distances';
 
         var rulerImg = document.createElement('div');
         rulerImg.style.width= '100%';
@@ -137,35 +270,61 @@
         rulerImg.style.backgroundRepeat = 'no-repeat';
         rulerUI.appendChild(rulerImg);
 
+        var clickedButtonEffect = 'inset 0 1px 4px rgba(0, 0, 0, 0.4)';
+        var unclickedButtonEffect = '0 2px 4px rgba(0, 0, 0, 0.4)';
 
-        var rulerListen = null;
         google.maps.event.addDomListener(rulerUI, 'click', function() {
-          if (null == rulerListen) {
-            rulerListen = google.maps.event.addListener(map, 'click', calcDist);
-            rulerUI.style.boxShadow = 'inset 0 1px 4px rgba(0, 0, 0, 0.4)';
-          } else {
-            if (null != origlisten) google.maps.event.removeListener(origlisten);
-            if (null != destlisten) google.maps.event.removeListener(destlisten);
-            if (null != origin)   origin.setMap(null);
-            if (null != dest)     dest.setMap(null);
-            if (null != distline) distline.setMap(null);
-            origlinsten = null;
-            destlinsten = null;
-            origin   = null;
-            dest     = null;
-            distline = null;
+          if (null == topographer) {
+            if (null != coordinateMarker) {
+              coordinateMarker.kill();
+              coordinateMarker = null;
+              compassUI.style.boxShadow = unclickedButtonEffect;
+            }
 
-            google.maps.event.removeListener(rulerListen);
-            rulerListen = null;
-            rulerUI.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.4)';
+            topographer = new Topographer();
+            rulerUI.style.boxShadow = clickedButtonEffect;
+          } else {
+            topographer.kill();
+            topographer = null;
+
+            rulerUI.style.boxShadow = unclickedButtonEffect;
           }
         });
 
-        var animationsUI = document.createElement('div');
+
+        var compassUI = document.createElement("div");
+        compassUI.style.cssText = rulerUI.style.cssText;
+        compassUI.style.minWidth = "16px";
+        compassUI.title = "Determine coordinates";
+
+        var compassImg = document.createElement("div");
+        compassImg.style.cssText = rulerImg.style.cssText;
+        compassImg.style.backgroundImage = "url('images/compass.png')";
+        compassUI.appendChild(compassImg);
+
+        google.maps.event.addDomListener(compassUI, "click", function (){
+          if (null == coordinateMarker) {
+            if (topographer != null) {
+              topographer.kill();
+              topographer = null;
+              rulerUI.style.boxShadow = unclickedButtonEffect;
+            }
+
+            coordinateMarker = new CoordinateMarker()
+            compassUI.style.boxShadow = clickedButtonEffect;
+          } else {
+            coordinateMarker.kill();
+            coordinateMarker = null;
+
+            compassUI.style.boxShadow = unclickedButtonEffect;
+          }
+        });
+
+
+        var animationsUI = document.createElement("div");
         animationsUI.style.cssText = rulerUI.style.cssText;
         animationsUI.style.minWidth = "86px";
-        animationsUI.title = 'Disable Link Visibility Animations';
-        controlsDiv.appendChild(animationsUI);
+        animationsUI.title = "Disable Link Visibility Animations";
 
         var animationsText = document.createElement('div');
         animationsText.style.fontFamily = 'Arial,sans-serif';
@@ -183,6 +342,12 @@
             animationsText.style.fontWeight = "normal";
           }
         });
+
+
+
+        controlsDiv.appendChild(rulerUI);
+        controlsDiv.appendChild(compassUI);
+        controlsDiv.appendChild(animationsUI);
 
       }
 
@@ -213,8 +378,8 @@
         infowindow = new google.maps.InfoWindow({
           content: "<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>" + point[ip].name + "</b><br/><br/>" +
                    "<b>Node IPs:</b> "+ ip +
-                     (null == point[ip].aliases.length > 0? "" : ", " + point[ip].aliases) + "<br/>" +
-                     (null == point[ip].links.length   > 0? "" : "<b>Neighbours:</b><br/>" + getNeighboursTable(ip)) +
+                     (point[ip].aliases.length == 0 ? "" : ", " + point[ip].aliases) + "<br/>" +
+                     (point[ip].links.length   == 0 ? "" : "<b>Neighbours:</b><br/>" + getNeighboursTable(ip)) +
                    "</div>"
         });
 
@@ -226,41 +391,38 @@
        * The animated lines that show up when hovering a node
        */
       function animateNodeLines (ip) {
-        for (var i = 0; i < point[ip].lines.length ; i++) {
+        for (var i = 0; i < point[ip].links.length ; i++) {
           animatedlines.push(new google.maps.Polyline({
-            path: point[ip].lines[i].getPath(),
+            path: point[ip].links[i].line.getPath(),
             strokeOpacity: 0,
             icons: [{
-              icon: { path: 'M 0, -1 0, 2', strokeOpacity: 1, strokeColor: "#00FF00", scale: 3 },
+              icon: animationMovingIcon, //the same for all lines, defined globally
               offset: '0',
-              repeat: '20px'
+              repeat: '35px'
             }],
             zIndex: 10,
             map: map
           }));
-
         }
 
-        var offset = 0;
-        animationIntervalID = window.setInterval(
-          function animateFun() {
-            if (animate) {
-              offset = offset + 2;
-              for (var i = 0; i < animatedlines.length; i++) {
-                var icons = animatedlines[i].get('icons');
-                icons[0].offset = offset + "px";
-                animatedlines[i].set("icons", icons);
-              }
+        var offset = 35;
+        animationIntervalID = window.setInterval(function () {
+          if (animate) {
+            offset = (offset  + 32) % 35;
+            for (var i = 0; i < animatedlines.length; i++) {
+              var icons = animatedlines[i].get('icons');
+              icons[0].offset = offset + "px";
+              animatedlines[i].set("icons", icons);
             }
           }
-          , 500);
+        }, 100);
       }
 
-      function stopAnimatingNodeLines(ip) {
-        for (var i = 0; i < animatedlines.length; i++) {
-            animatedlines[i].setMap(null);
-            animatedlines[i] = null;
+      function stopAnimatingNodeLines() {
+        while (animatedlines.length > 0) {
+          animatedlines.shift().setMap(null);
         }
+
         animatedlines = new Array();
         window.clearInterval(animationIntervalID);
       }
@@ -269,14 +431,16 @@
       /*
        * All information we gather for each node
        */
-      function OLSRNode (mainip, lat, lon, name) {
-        this.name  = name;
-        this.ip    = mainip;
-        this.aliases = new Array();
-        this.lat   = lat;
-        this.lon   = lon;
-        this.links = new Array();
+      function OLSRNode (mainip, name) {
+        this.name      = name;
+        this.ip        = mainip;
+        this.aliases   = new Array();
+        this.links     = new Array(); //[{ toip, lq, nlq, etx, line<google.maps.Polyline> }]
         this.hasCoords = false;
+        //set by setCoords:
+        //this.lat
+        //this.lon
+        //this.marker
 
         this.setCoords = function(setLat, setLon) {
           this.lat = setLat;
@@ -289,17 +453,13 @@
               map: map
           });
 
-          google.maps.event.addListener(this.marker, "click",     function() { showNodeDetailWindow(mainip);   });
-          google.maps.event.addListener(this.marker, "mouseover", function() { animateNodeLines(mainip);       });
-          google.maps.event.addListener(this.marker, "mouseout",  function() { stopAnimatingNodeLines(mainip); });
+          google.maps.event.addListener(this.marker, "click",     function() { showNodeDetailWindow(mainip); });
+          google.maps.event.addListener(this.marker, "mouseover", function() { animateNodeLines(mainip);     });
+          google.maps.event.addListener(this.marker, "mouseout",  function() { stopAnimatingNodeLines();   });
 
           bounds.extend(this.marker.getPosition());
           this.hasCoords = true;
         };
-        if (lat != null && lon != null) {
-          this.setCoords(lat, lon);
-        }
-        this.lines = new Array();// [google.maps.Polyline]
 
       }
 
@@ -310,7 +470,7 @@
       function Mid (mainip, aliasip) {
         alias[aliasip] = mainip;
         if ( null == point[mainip]) {
-          point[mainip] = new OLSRNode(mainip, null, null, null);//isn't there a better way?
+          point[mainip] = new OLSRNode(mainip, null);//isn't there a better way?
         }
         point[mainip].aliases.push(aliasip);
       }
@@ -318,11 +478,11 @@
 
       function Node (mainip, lat, lon, ishna, hnaip, name) {
         if (null == point[mainip]) {
-          point[mainip] = new OLSRNode(mainip, lat, lon, name);
+          point[mainip] = new OLSRNode(mainip, name);
         } else {
           point[mainip].name = name;
-          point[mainip].setCoords(lat, lon);
         }
+        point[mainip].setCoords(lat, lon);
       }
 
 
@@ -345,24 +505,24 @@
             toip: toip,
             lq: lq,
             nlq: nlq,
-            etx: etx
+            etx: etx,
+
+            line: new google.maps.Polyline({
+              path: [
+                point[fromip].marker.getPosition(),
+                point[toip].marker.getPosition()
+              ],
+              strokeColor: "#FF0000",
+              strokeOpacity: 0.5,
+              clickable: false,
+              zIndex: 5,
+              map: map
+            })
           });
 
-          //Add a line between the two points
-          point[fromip].lines.push(new google.maps.Polyline({
-            path: [
-              point[fromip].marker.getPosition(),
-              point[toip].marker.getPosition()
-            ],
-            strokeColor: "#FF0000",
-            strokeOpacity: 0.5,
-            clickable: false,
-            zIndex: 5,
-            map: map
-            })
-          );
+
         } else {
-          //TODO: Add debug code here
+          //TODO: Add debug code here?
         }
       }
       
@@ -397,10 +557,58 @@
           map.setCenter(new google.maps.LatLng(39.6183836, -8.8302612));
           map.setZoom(11);
         }
+        <?php
+          if (isset($_GET['debug'])) {
+            echo "debug();";
+          }
+        ?>
+      }
+
+
+      function debug() {
+        document.getElementById("map").style.height = "80%";
+        document.getElementById("debug").style.display = "inline";
+        var nodestable = document.getElementById("debugTable");
+        var row;
+        var cell;
+
+        for (var i in point) {
+          row  = document.createElement("tr");
+          cell = document.createElement("td");
+          cell.innerHTML = point[i].ip;
+          row.appendChild(cell);
+
+          cell = document.createElement("td");
+          if (null == point[i].name) {
+            cell.style.backgroundColor = "#FF0000";
+            cell.style.color = "#000000";
+            cell.innerHTML = "NO";
+          } else {
+            cell.innerHTML = point[i].name;
+          }
+          row.appendChild(cell);
+
+          cell = document.createElement("td");
+          if (! point[i].hasCoords) {
+            cell.style.backgroundColor = "#FF0000";
+            cell.style.color = "#000000";
+            cell.innerHTML = "NO";
+          } else {
+            cell.innerHTML = point[i].lat + ", " + point[i].lon;
+          }
+          row.appendChild(cell);
+
+          nodestable.appendChild(row);
+        }
       }
     </script>
   </head>
   <body onLoad="initialize()">
     <div id="map" style="width: 100%; height: 100%"></div>
+    <div id="debug" style="width: 100%; height: 10%; display: none;">
+      <table id="debugTable">
+        <tr><td>Node's Main IP</td><td>Name</td><td>Coordinates</td></tr>
+      </table>
+    </div>
   </body>
 </html>
