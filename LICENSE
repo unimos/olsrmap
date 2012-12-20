@@ -1,0 +1,33 @@
+
+
+
+The World Magnetic Model Javascript is Copyright of Bill Chadwick and is used
+under permission for any purpose. Quoting:
+
+--------------------
+Date: Mon, 27 Oct 2008 14:18:33 -0700 (PDT)
+Subject: USGS / BGS / DoD World Magnetic Model - JavaScript version
+From: Bill Chadwick <bill.chadw...@thalesgroup.com>
+To: Google Maps API <Google-Maps-API@googlegroups.com>
+
+The WMM predicts the difference between true north and magnetic north
+around the world for the period 2005-2010. I believe that this is the
+same model as used in most hand held GPS receivers.
+
+I have ported the USGS WMM C code at http://www.ngdc.noaa.gov/geomag/WMM/wmm_cdownload.shtml
+to javascript.
+
+You will find my javascript at
+
+http://wheresthepath.googlepages.com/WorldMagneticModel.js
+
+This code appears to give the same results as the BGS online
+calculator at http://www.geomag.bgs.ac.uk/gifs/wmm_calc.html.
+
+Feel free to use for any purpose.
+
+--------------------
+
+Original at:
+https://groups.google.com/d/msg/google-maps-api/9b8KQAugGVM/QgcAedA44X0J
+
