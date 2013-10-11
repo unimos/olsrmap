@@ -3,11 +3,20 @@
 <?php
   //The location where the OLSR daemon dumps the latlon file
   $latlonfile="/var/run/latlon.js";
+
+  //The community where this script is installed.
+  //WARNING: The HeyWhatsThat terrain profile service is provided freely by its author, Michael Kosowsky, under the
+  //condition that whoever wants to use it, contacts him beforehand. His written permission is necessary to use the
+  //profile tool.
+  //Please do not enable the profile tool if you don't have written permission from Michael Kosowsky. Thank you
+  //This will signal the origin of the requests to HeyWhatsThat:
+  $srccommunity="";
 ?>
 
 <!DOCTYPE html>
 <html>
   <head>
+    <title>OLSR nodes map</title>
     <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
     <style type="text/css">
       html, body, #map {
@@ -69,6 +78,18 @@
             topographer.updateCoords(null, topographer.destination.getPosition());
           });
         }
+      }
+
+      /*
+       * Gets the source of a profile image, given the coordinates of two locations, frequency to use, curvature and a source.
+       * TODO: This is currently a bit fragile, as no validation is done on the inputs.
+       * TODO: Allow other fields to be parametrized.
+       */
+      function getProfileImageSrc (pt0lat, pt0lon, pt1lat, pt1lon, freq, curvature, src) {
+        return "http://www.heywhatsthat.com/bin/profile-0904.cgi?" +
+               "pt0=" + pt0lat + "," + pt0lon + ",ff0000,,ff0000&" +
+               "pt1=" + pt1lat + "," + pt1lon + ",,,ff0000&" +
+               "axes=1&metric=1&width=350&freq=" + freq + "&curvature=" + curvature + "<?php if (!empty($srccommunity)) echo "&src=$srccommunity"?>";
       }
 
       function Topographer () {
@@ -161,16 +182,38 @@
             var yearLength   = new Date(now.getFullYear()+1, 0, 1) - yearStart;
             var nowYearFloat = now.getFullYear() + Math.round(((now - yearStart) / yearLength) * 100) / 100;
 
-
             var magneticDeclination = (new WorldMagneticModel()).declination(0.0, this.origin.getPosition().lat(), this.origin.getPosition().lng(), nowYearFloat);
             var headingMagneticCompass = Math.round(((trueNorthHeading - magneticDeclination + 360)%360) * 100) / 100;
 
-            infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\">" +
+            infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'sans-serif'\">" +
                                     "<b>Distance:</b> " + distanceMeters + " m<br/>" +
-                                    "<b>Magnetic heading at start:</b> " + headingMagneticCompass + "&deg; (approx.)" +
+                                    "<b>Magnetic heading at start:</b> " + headingMagneticCompass + "&deg;<br/><br/>" +
+
+<?php if (!empty($srccommunity)) {
+  echo <<<EOF
+                                    "<b>Profile:</b><br/>" +
+//                                    "<img src=\"http://profile.heywhatsthat.com/bin/profile.cgi?pt0=" + this.origin.getPosition().lat() + "," + this.origin.getPosition().lng() + "&pt1=" + this.destination.getPosition().lat() + "," + this.destination.getPosition().lng() + "&axes=1&metric=1&curvature=1&width=350\" />" +
+                                    "<img id=\"profileImg\" src=" + getProfileImageSrc(this.origin.getPosition().lat(),      this.origin.getPosition().lng(),
+                                                                                       this.destination.getPosition().lat(), this.destination.getPosition().lng(),
+                                                                                       "2400", "0") + "/><br/>" +
+                                    "<form onclick=\'" +
+                                              "if (document.getElementById(\"roundearth\").checked) { curvature=\"1\"; } else { curvature=\"0\"; }; " +
+                                              "if (document.getElementById(\"freqswitchbg\").checked) { freq=\"2400\"; } else { freq=\"5200\"; };" +
+                                              "document.getElementById(\"profileImg\").src=getProfileImageSrc(" +
+                                                                                      this.origin.getPosition().lat()      + ", " + this.origin.getPosition().lng()      + ", " +
+                                                                                      this.destination.getPosition().lat() + ", " + this.destination.getPosition().lng() + ", " +
+                                                                                      "freq, curvature)" +
+                                      "\'>" +
+                                      "<input type=\"checkbox\" id=\"roundearth\">Round Earth</input><br/>" +
+                                      "<input type=\"radio\"    id=\"freqswitchbg\" name=\"freqswitch\" value=\"bg\" checked>802.11bg (2.4GHz)</input>" +
+                                      "<input type=\"radio\"    id=\"freqswitcha\"  name=\"freqswitch\" value=\"a\">802.11a (5GHz)</input>" +
+                                    "</form>" +
+
+                                    "<div style=\"font-size:10px; text-align: right\">Profile image courtesy of <a href=\"http://www.heywhatsthat.com/faq.html\" target=\"_blank\">HeyWhatsThat</a><br/>" +
+                                    "&copy;2013 Michael Kosowsky. All rights reserved. Used with permission.<br/></div>" +
+EOF;
+} ?>
                                   "</div>");
-                                 //The heading measurement is adjusted to the magnetic north deviation in Portugal for 2013-2014 (approx. 2.8).
-                                 //Source: http://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination
             infowindow.open(map, this.destination);
           }
         };
@@ -229,7 +272,7 @@
           if (null == infowindow) {
             infowindow = new google.maps.InfoWindow();
           }
-          infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\">" +
+          infowindow.setContent("<div style=\"font-size: 10pt; font-family: 'sans-serif'\">" +
                                     "<b>Coordinates:</b> " + Math.round(this.marker.getPosition().lat()*100000)/100000 +
                                                              ", " +
                                                              Math.round(this.marker.getPosition().lng()*100000)/100000 +
@@ -376,7 +419,7 @@
         }
 
         infowindow = new google.maps.InfoWindow({
-          content: "<div style=\"font-size: 10pt; font-family: 'Arial, sans-serif'\"><b>" + point[ip].name + "</b><br/><br/>" +
+          content: "<div style=\"font-size: 10pt; font-family: 'sans-serif'\"><b>" + point[ip].name + "</b><br/><br/>" +
                    "<b>Node IPs:</b> "+ ip +
                      (point[ip].aliases.length == 0 ? "" : ", " + point[ip].aliases) + "<br/>" +
                      (point[ip].links.length   == 0 ? "" : "<b>Neighbours:</b><br/>" + getNeighboursTable(ip)) +
