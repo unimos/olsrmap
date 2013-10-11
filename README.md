@@ -21,6 +21,7 @@ Looking around at the available OLSR maps, none of them seemed to have all featu
  * Features measuring tools for easy:
    * distance determination;
    * coordinate determination;
+   * terrain profile (orography) between two points;
    * determination of the magnetic bearing between two points;
  * Uses Google Maps;
  * Can be installed on a central/Internet-accessible server;
