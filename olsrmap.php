@@ -555,7 +555,10 @@ EOF;
                 point[fromip].marker.getPosition(),
                 point[toip].marker.getPosition()
               ],
-              strokeColor: "#FF0000",
+              strokeColor: ( //TODO: this should be a function, referenced by the multiple places that need this
+                          Math.round(google.maps.geometry.spherical.computeDistanceBetween(point[fromip].marker.getPosition(), point[toip].marker.getPosition())*100)/100
+                           ) > 10000 ? "#808fff" : "#FF0000",
+
               strokeOpacity: 0.5,
               clickable: false,
               zIndex: 5,
